@@ -1,0 +1,388 @@
+---
+title: "Exam 2"
+author: 'Jiawei Chen'
+date: "11/25/2019"
+output: 
+  html_document:
+    keep_md: yes
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA, 
+                      message = FALSE, warning = FALSE)
+```
+
+```{r library}
+library(tidyverse)
+library(jsonlite)
+library(shiny)
+library(shinyBS)
+library(shinythemes)
+```
+
+## Task 1
+
+```{r task1}
+base = 'https://newsapi.org/v2/'
+my_api = '&apiKey=8a46108f0c844de4884b6ad77c912ad8'
+
+# 1
+qu_1g <- 'sources?category=general&language=en&country=us'
+qu_1b <- 'sources?category=business&language=en&country=us'
+res_1g <- jsonlite::fromJSON(paste(base, qu_1g, my_api,sep = '')) %>% .[[2]]
+res_1b <- jsonlite::fromJSON(paste(base, qu_1b, my_api,sep = '')) %>% .[[2]]
+res_1 <- bind_rows(res_1g,res_1b) %>%
+  filter(name %in% 
+           c('CNN', 'Fox News', 'The Wall Street Journal', 'Reuters')) %>% 
+  select(id)
+res_1
+
+# 2
+qu_2 <- 'top-headlines?sources=cnn,fox-news,the-wall-street-journal,reuters&q=taxes'
+res_2 <- fromJSON(paste(base, qu_2, my_api, sep = ''))
+if (length(res_2$articles)==0) {
+  print('No such articles')
+} else {
+res_2 <- fromJSON(paste(base, qu_2, my_api, sep = ''))$article %>%
+  select(title)
+}
+res_2
+## the above expression can yield a result of length 0 because there are no relevant articles about taxes.
+
+# 3
+qu_3 <- 'everything?qInTitle=healthcare&sources=cnn,fox-news,the-wall-street-journal,reuters&from=2019-11-01&to=2019-11-01&language=en'
+res_3 <- fromJSON(paste(base,qu_3,my_api,sep=''))$articles %>% 
+  select(title)
+res_3
+
+```
+
+
+## Task 2
+
+```{r get_sources}
+# didn't check whether the input of `category` falls into c('business', 'entertainment', 'general', 'health', 'science', 'sports', 'technology') because it can be easily restricted with a select box in the app -- leaving users no choice to input a weird `category` value. The same rationale applies to many parameters in the other two functions as well.
+get_sources <- function(category=c('business', 'entertainment', 'general', 'health', 'science', 'sports', 'technology'), api_key=NULL) {
+  if (is.null(api_key)) {
+    stop(
+      'Please input your api key',
+      call. = FALSE
+    )
+  }
+  stopifnot(any(is.character(category), is.null(category)))
+  
+  base <- 'https://newsapi.org/v2/sources?language=en&country=us'
+  cat <- paste('&category=', category, sep='')
+  res <- map(cat, ~fromJSON(
+    paste(base, .x, '&apiKey=',api_key, sep = ''))) %>% 
+    map( ~.x['sources']) %>% 
+    purrr::flatten() %>% 
+    bind_rows() %>% 
+    filter(id %in% c('cnn', 'fox-news', 'the-wall-street-journal', 'reuters'))
+  
+  return(res)
+}
+```
+
+```{r get_headlines}
+get_headlines <- function(sources = c('cnn', 'fox-news', 'the-wall-street-journal', 'reuters'),
+                          q=NULL, page_size=20, page=1, api_key=NULL) {
+  if (is.null(c(sources, q))) {
+    stop(
+      'Please specify at least one parameter to filter',
+      call. = FALSE
+    )
+  }
+  stopifnot(is.numeric(c(page_size,page)))
+  stopifnot(any(is.character(q),is.null(q)))
+  #q = ifelse(is.null(q), q, URLencode(q)) somehow this doesn't work
+  if (!is.null(q)) q = URLencode(q)
+  
+  base <- 'https://newsapi.org/v2/top-headlines?'
+  res_nes <- fromJSON(
+    paste(base,'sources=', paste(sources, collapse=','), '&q=', q,
+          '&page_size=', page_size, '&page=', page, 
+          '&apiKey=', api_key, sep = ''))
+  if (length(res_nes$articles)==0) {
+    return('No such news found.')
+  } else {
+  # deal with the nested tiny data frame
+    res <- bind_cols(res_nes$articles$source %>% tidyr::unnest(cols=c()),
+                   res_nes$article %>% select(-source)) %>%
+      filter(id %in% c('cnn', 'fox-news', 'the-wall-street-journal', 'reuters')) %>% 
+      mutate(publishedAt = publishedAt %>%
+               str_extract('\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d*') %>% 
+               str_replace('T', ' '),
+             Image = paste('<img src=','"',
+                           urlToImage,'"',
+                           ' height="300" width="300"></img>',sep=''))
+    # generate a new column for the use of Shiny app
+    return(res)
+  }
+}
+```
+
+```{r get_historic}
+get_historic <- function(q = NULL, q_title = NULL, 
+                         sources=c('cnn', 'fox-news', 'the-wall-street-journal', 'reuters'),
+                         from = Sys.Date()-1, to = Sys.Date()-1, 
+                         sort_by = 'publishedAt', 
+                         page_size=20, page=1, api_key = NULL) {
+  if (is.null(c(sources, q, q_title))) {
+    stop(
+      'Please specify at least one parameter to filter',
+      call. = FALSE
+    )
+  }
+  stopifnot(is.numeric(c(page_size,page)))
+  stopifnot(all(any(is.character(q),is.null(q)),
+                any(is.character(q_title),is.null(q_title))))
+  if (!is.null(q)) q = URLencode(q)
+  if (!is.null(q_title)) q_title = URLencode(q_title)
+  
+  base <- 'https://newsapi.org/v2/everything?language=en'
+  res_nes <- fromJSON(
+    paste(base, '&q=', q, '&qInTitle=', q_title,
+          '&sources=', paste(sources, collapse=','), 
+          '&from=', from, '&to=', to, '&sort_by=', sort_by,
+          '&page_size=', page_size, '&page=', page,
+          '&apiKey=', api_key, sep = ''))
+  if (length(res_nes$articles)==0) {
+    return('No such news found.')
+  } else {
+    res <- bind_cols(res_nes$articles$source%>% tidyr::unnest(cols = c()),
+                   res_nes$article %>% select(-source)) %>%
+      filter(id %in% c('cnn', 'fox-news', 'the-wall-street-journal', 'reuters')) %>% 
+      mutate(Image = paste('<img src=','"',
+                           urlToImage,'"',
+                           ' height="300" width="300"></img>',sep=''))
+    # generate a new column for the use of Shiny app
+    return(res)
+  }
+}
+```
+
+
+## Task 3
+
+
+```{r shiny app building}
+
+ui <- navbarPage(theme = shinythemes::shinytheme('cosmo'),
+                 title = "News API!",
+  tabPanel("Sources",
+    sidebarLayout(
+      sidebarPanel(
+        selectizeInput(inputId = 'cat', label = "Category:", 
+                       choices = c('business', 'entertainment', 'general',
+                                   'health', 'science', 'sports',
+                                   'technology'), multiple = TRUE),
+        checkboxGroupInput("sshow_vars", "Columns to show:",
+                           choices = c('id','name','description','url', 'category', 'language', 'country'), 
+                           selected = c('id','description','category')),
+        div(align = 'right',actionButton('sget','Get News!'))
+      ),
+      mainPanel(
+       DT::dataTableOutput("sdf")
+      )
+    )
+  ), # end first tab panel - sources
+  
+  tabPanel("Top headlines",
+    sidebarLayout(
+      sidebarPanel(
+        selectizeInput(inputId = 'tsor', label = "Sources:", 
+                       choices = list(
+                         'CNN' = 'cnn', 
+                         'Fox News' = 'fox-news', 
+                         'The Wall Street Journal' = 'the-wall-street-journal',
+                         'Reuters' = 'reuters'),
+                       selected = 'cnn',
+                       multiple = TRUE),
+        textInput("tq", label = 'Keywords to search for:'),
+        
+        sliderInput(inputId = 'tpsize', label = 'Page size:',
+                     value = 20, min = 1, max = 100, step = 1),
+        bsTooltip(id = "tpsize", title = "This is the maximum possible pieces of news you can find through this search.",
+                  placement = "bottom", trigger = "hover", 
+                  options = list(placement = 'bottom')),
+        sliderInput(inputId = 'tpage', label = 'Page:',
+                    value = 1, min = 1, max = 100, step = 1),
+        bsTooltip(id = "tpage", title = "This helps page through your searched results, if they are more than the Page Size specified above.",
+                  placement = "bottom", trigger = "hover", 
+                  options = list(placement = 'bottom')),
+        checkboxGroupInput("tshow_vars", "Columns to show:",
+                           choices = c('id','name','author', 'title', 'description', 'url', 'Image', 'urlToImage', 'publishedAt', 'content'),
+                           selected = c('name', 'author', 'title', 'description', 'Image', 'publishedAt')),
+        div(align = 'right',actionButton('tget','Get News!'))
+      ),
+      mainPanel(
+       DT::dataTableOutput("tdf")
+       )
+    )
+  ), # end second panel
+
+  tabPanel("Historic News",
+    sidebarLayout(
+      sidebarPanel(
+        selectizeInput(inputId = 'hsor', label = "Sources:", 
+                       choices = list('CNN' = 'cnn', 
+                            'Fox News' = 'fox-news', 
+                            'The Wall Street Journal' = 'the-wall-street-journal', 
+                            'Reuters' = 'reuters'),
+                       selected = 'cnn',
+                       multiple = TRUE),
+        textInput("hq", label = 'Keywords to search for:'),
+        bsTooltip(id = "hq", title = "Advanced search is supported here:<br>Surround phrases with quotes for exact match.<br>Prepend words or phrases that must appear with a + symbol. Eg: +bitcoin<br>Prepend words that must not appear with a - symbol. Eg: -bitcoin<br>Alternatively you can use the AND / OR / NOT keywords, and optionally group these with parenthesis. Eg: crypto AND (ethereum OR litecoin) NOT bitcoin.",
+        placement = "bottom", trigger = "hover", options = list(placement = 'bottom')),
+        
+        textInput("qInTitle", label = 'Keywords in the title to search for:'),
+        bsTooltip(id = "qInTitle", title = "Advanced search is supported here:<br>Surround phrases with quotes for exact match.<br>Prepend words or phrases that must appear with a + symbol. Eg: +bitcoin<br>Prepend words that must not appear with a - symbol. Eg: -bitcoin<br>Alternatively you can use the AND / OR / NOT keywords, and optionally group these with parenthesis. Eg: crypto AND (ethereum OR litecoin) NOT bitcoin.",
+        placement = "bottom", trigger = "hover", options = list(placement = 'bottom')),
+        
+        dateRangeInput(inputId = "dates", label = "Date range", 
+                       start = Sys.Date()-1, end = Sys.Date()-1,
+                       max = Sys.Date()-1),
+        
+        radioButtons(inputId = "sort_by", label = "Sort results by:",
+                     choices = list("Newest" = "publishedAt",
+                                    "Relevancy" = "relevancy", 
+                                    "Popularity" = "popularity"),
+                     selected = "publishedAt"),
+        
+        sliderInput(inputId = 'hpsize', label = 'Page size:',
+                      value = 20, min = 1, max = 100, step = 1),
+        bsTooltip(id = "hpsize", title = "This is the maximum possible pieces of news you can find through this search.",
+                  placement = "bottom", trigger = "hover", 
+                  options = list(placement = 'bottom')),
+        sliderInput(inputId = 'hpage', label = 'Page:',
+                     value = 1, min = 1, max = 100, step = 1),
+        bsTooltip(id = "hpage", title = "This helps page through your searched results, if they are more than the Page Size specified above.",
+                  placement = "bottom", trigger = "hover", 
+                  options = list(placement = 'bottom')),
+        checkboxGroupInput("hshow_vars", "Columns to show:",
+                           choices = c('id','name','author', 'title', 'description', 'url', 'Image', 'urlToImage', 'publishedAt', 'content'),
+                           selected = c('name', 'author', 'title', 'description', 'Image', 'publishedAt')),
+        div(align = 'right',actionButton('hget','Get News!'))
+      ),  
+      mainPanel(
+       DT::dataTableOutput("hdf"))
+    )
+  ), # end third panel - historic news
+
+  navbarMenu("More",
+    tabPanel("API key management",
+      basicPage(
+        actionButton("new_key", "Input a new API key"),
+        verbatimTextOutput(outputId = "current_key"))
+    ),
+    tabPanel("About & Help",
+      fluidRow(
+        column(9,
+               htmlOutput('intro')),
+        column(3,
+               tags$small(
+                 a(href="https://newsapi.org/", "Powered by NewsAPI.org")
+               ))
+               
+      )
+    )
+  ) # end navbar menu
+)
+
+server <- function(input, output, session) {
+  
+  # reactiveValues object for storing api key
+  vals <- reactiveValues(api = NULL)
+        
+  # Return the UI for a modal dialog with api key input. If 'failed' is
+  # TRUE, then display a message that the key was invalid.
+  dataModal <- function(failed = FALSE) {
+    modalDialog(
+    textInput(inputId = "api_attempt", 
+              label = "Please input your API key"),
+    span('(Please visit https://newsapi.org/register to get your API key, ', 'if you do not have one)'),
+    if (failed) div(tags$b("Invalid API key", style = "color: red;")),
+    footer = tagList(actionButton("ok", "OK"))
+    )
+  }
+    
+  # Show modal when input_new_api button is clicked or entering the page for the first time
+  showModal(dataModal())
+  observeEvent(input$new_key, {
+    showModal(dataModal())
+  })
+        
+  # Check that the key exists.
+  observeEvent(input$ok, {
+    t <- try(fromJSON(paste('https://newsapi.org/v2/sources?apiKey=', 
+                            input$api_attempt, sep = '')))
+    if ("try-error" %in% class(t)) {
+      showModal(dataModal(failed = TRUE))
+    } else {
+      vals$api <- input$api_attempt
+      removeModal()
+    }
+  })
+  output$current_key = renderText(vals$api)
+    # output for news sources
+  sourcedf <- eventReactive(input$sget, {
+    get_sources(category = input$cat, api_key = vals$api)
+    })
+  output$sdf <- DT::renderDataTable({
+    DT::datatable(sourcedf()[,input$sshow_vars, drop = FALSE],
+                  options = list(searchHighlight = TRUE,
+                                 lengthMenu = c(5, 10, 20)))
+    })
+    
+    # output for top headlines
+  topdf <- eventReactive(input$tget, {
+    get_headlines(sources = input$tsor, 
+                  q = input$tq,
+                  page_size = input$tpsize,
+                  page = input$tpage,
+                  api_key = vals$api)
+    })
+  output$tdf <- DT::renderDataTable({
+    DT::datatable(topdf()[,input$tshow_vars, drop = FALSE], 
+                  options = list(searchHighlight = TRUE,
+                                 lengthMenu = c(5, 10, 20)),
+                  escape = FALSE)
+    })
+    
+    # output for historic news
+  hisdf <- eventReactive(input$hget, {
+    get_historic(sources = input$hsor, q = input$hq,
+                 q_title = input$qInTitle, 
+                 sort_by = input$sort_by, 
+                 from = input$dates[1], 
+                 to = input$dates[2], 
+                 page_size = input$hpsize,
+                 page = input$hpage,
+                 api_key = vals$api) %>% 
+      mutate(Image = paste('<img src=','"',
+                           urlToImage,'"',
+                           ' height="200" width="200"></img>',
+                           sep=''))
+    })
+  output$hdf <- DT::renderDataTable({
+    DT::datatable(hisdf()[,input$hshow_vars, drop = FALSE],
+                  options = list(searchHighlight = TRUE,
+                                 lengthMenu = c(5, 10, 20)),
+                  escape = FALSE)
+    })
+  output$intro <- renderUI({HTML('Welcome to News API. This application serves the following functions:<br/>1. The "Sources" page returns the subset of news publishers that are available by specifying the category.<br/>2. The "Top Headlines" provides live top and breaking headlines with desired sources and keywords.<br/>3. The "Historic News" page searches through millions of articles published so far, with a range of filtering choices.<br/>If an error occurs, please try with other sources or key words.')})
+  
+}
+
+ 
+# Run the application 
+shinyApp(ui = ui, server = server)
+
+
+
+
+```
+
+

@@ -1,5 +1,5 @@
 ---
-title: "Exam 2"
+title: "Sample 1"
 author: 'Jiawei Chen'
 date: "11/25/2019"
 output: 
@@ -22,7 +22,7 @@ library(shinythemes)
 ```
 
 ## Task 1
-
+In this task, we practice the use of News API (https://newsapi.org/) by extracting some information. 
 ```{r task1}
 base = 'https://newsapi.org/v2/'
 my_api = '&apiKey=8a46108f0c844de4884b6ad77c912ad8'
@@ -60,7 +60,7 @@ res_3
 
 
 ## Task 2
-
+In this task, we build three functions which serve as wrappers for the three endpoints for News API. These will be incorporate into the shiny app below.
 ```{r get_sources}
 # didn't check whether the input of `category` falls into c('business', 'entertainment', 'general', 'health', 'science', 'sports', 'technology') because it can be easily restricted with a select box in the app -- leaving users no choice to input a weird `category` value. The same rationale applies to many parameters in the other two functions as well.
 get_sources <- function(category=c('business', 'entertainment', 'general', 'health', 'science', 'sports', 'technology'), api_key=NULL) {
@@ -166,7 +166,7 @@ get_historic <- function(q = NULL, q_title = NULL,
 
 ## Task 3
 
-
+In this task, we build a shiny app by incorporating the three wrapper functions above, which serve the function of helping users extract news with desired attributes.
 ```{r shiny app building}
 
 ui <- navbarPage(theme = shinythemes::shinytheme('cosmo'),
